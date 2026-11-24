@@ -47,6 +47,11 @@ function erroBanco(res, e) {
 // Envolve as rotas para que qualquer erro do banco vire resposta, sem derrubar o servidor
 const rota = (fn) => async (req, res, next) => { try { await fn(req, res, next); } catch (e) { erroBanco(res, e); } };
 
+// Escolas que a pessoa pode acessar
+const escolasDoUsuario = (uid) => db.all(
+  `SELECT c.id, c.escola AS nome FROM hor_usuario_escola ue JOIN hor_config c ON c.id = ue.escola_id
+   WHERE ue.usuario_id = ? ORDER BY lower(c.escola), c.id`, uid);
+
 // ---------- Autenticação ----------
 app.post('/api/login', rota(async (req, res) => {
   const login = texto(req.body?.login).toLowerCase();
@@ -60,6 +65,7 @@ app.post('/api/login', rota(async (req, res) => {
   }
   tentativas.delete(chave);
   if (u.arquivado_em) return erro(res, 403, 'Acesso desativado. Fale com a coordenação.');
+  if (!(await escolasDoUsuario(u.id)).length) return erro(res, 403, 'Você não tem acesso a nenhuma escola. Fale com a coordenação.');
   await db.run(`DELETE FROM hor_sessoes WHERE criado_em < now() - interval '${DIAS_SESSAO} days'`);
   const token = crypto.randomBytes(32).toString('hex');
   await db.run('INSERT INTO hor_sessoes (token, usuario_id) VALUES (?, ?)', token, u.id);
@@ -67,7 +73,8 @@ app.post('/api/login', rota(async (req, res) => {
   res.json({ token, usuario: { id: u.id, nome: u.nome, login: u.login } });
 }));
 
-// Tudo abaixo exige login
+// Tudo abaixo exige login. A escola vem no cabeçalho X-Escola;
+// só vale se a pessoa tiver acesso a ela (senão, usa a primeira escola da pessoa).
 app.use('/api', rota(async (req, res, next) => {
   const h = req.headers.authorization || '';
   const token = h.startsWith('Bearer ') ? h.slice(7) : null;
@@ -77,6 +84,11 @@ app.use('/api', rota(async (req, res, next) => {
   if (!user) return erro(res, 401, 'Sessão expirada. Entre novamente.');
   req.user = user;
   req.token = token;
+  req.escolas = await escolasDoUsuario(user.id);
+  const pedida = num(req.headers['x-escola']);
+  // sem escolha válida: a escola mais antiga da pessoa
+  req.escola = req.escolas.some((e) => e.id === pedida) ? pedida
+    : req.escolas.reduce((menor, e) => (menor && menor < e.id ? menor : e.id), 0);
   next();
 }));
 
@@ -100,19 +112,44 @@ app.put('/api/me/senha', rota(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// ---------- Escolas ----------
+// Nova escola: quem cria passa a ter acesso. Pode copiar os horários e as regras da escola atual.
+app.post('/api/escolas', rota(async (req, res) => {
+  const nome = texto(req.body?.nome, 120);
+  if (!nome) return erro(res, 400, 'Informe o nome da escola');
+  if (req.escolas.length >= 30) return erro(res, 400, 'Limite de 30 escolas por pessoa');
+  const copiar = req.body?.copiar === true && req.escola;
+  const id = await transacao(async (q) => {
+    const nova = copiar
+      ? await q.get(`INSERT INTO hor_config (escola, rede, dias, duracao_aula, max_disc_dia, preferir_duplas)
+          SELECT ?, rede, dias, duracao_aula, max_disc_dia, preferir_duplas FROM hor_config WHERE id = ? RETURNING id`, nome, req.escola)
+      : await q.get('INSERT INTO hor_config (escola) VALUES (?) RETURNING id', nome);
+    await q.run('INSERT INTO hor_usuario_escola (usuario_id, escola_id) VALUES (?, ?)', req.user.id, nova.id);
+    if (copiar) {
+      await q.run('INSERT INTO hor_periodos (escola_id, turno, inicio, fim) SELECT ?, turno, inicio, fim FROM hor_periodos WHERE escola_id = ?', nova.id, req.escola);
+    }
+    return nova.id;
+  });
+  res.json({ id });
+}));
+
 // ---------- Tudo de uma vez (escolas pequenas: poucas centenas de linhas) ----------
 app.get('/api/dados', rota(async (req, res) => {
+  const E = req.escola;
   const [config, periodos, turmas, disciplinas, professores, indisponibilidades, distribuicao, aulas] = await Promise.all([
-    db.get('SELECT escola, rede, dias, duracao_aula, max_disc_dia, preferir_duplas FROM hor_config WHERE id = 1'),
-    db.all(`SELECT * FROM hor_periodos ORDER BY array_position(ARRAY['Manhã','Tarde','Noite'], turno), inicio`),
-    db.all('SELECT * FROM hor_turmas ORDER BY nome'),
-    db.all('SELECT * FROM hor_disciplinas ORDER BY nome'),
-    db.all('SELECT id, nome, jornada_horas::float AS jornada_horas, limite_aulas, max_aulas_dia FROM hor_professores ORDER BY nome'),
-    db.all('SELECT * FROM hor_indisponibilidades'),
-    db.all('SELECT * FROM hor_distribuicao'),
-    db.all('SELECT * FROM hor_aulas'),
+    db.get('SELECT escola, rede, dias, duracao_aula, max_disc_dia, preferir_duplas FROM hor_config WHERE id = ?', E),
+    db.all(`SELECT * FROM hor_periodos WHERE escola_id = ? ORDER BY array_position(ARRAY['Manhã','Tarde','Noite'], turno), inicio`, E),
+    db.all('SELECT * FROM hor_turmas WHERE escola_id = ? ORDER BY nome', E),
+    db.all('SELECT * FROM hor_disciplinas WHERE escola_id = ? ORDER BY nome', E),
+    db.all('SELECT id, nome, jornada_horas::float AS jornada_horas, limite_aulas, max_aulas_dia FROM hor_professores WHERE escola_id = ? ORDER BY nome', E),
+    db.all('SELECT i.* FROM hor_indisponibilidades i JOIN hor_professores p ON p.id = i.professor_id WHERE p.escola_id = ?', E),
+    db.all('SELECT d.* FROM hor_distribuicao d JOIN hor_turmas t ON t.id = d.turma_id WHERE t.escola_id = ?', E),
+    db.all('SELECT a.* FROM hor_aulas a JOIN hor_turmas t ON t.id = a.turma_id WHERE t.escola_id = ?', E),
   ]);
-  res.set('Cache-Control', 'no-store').json({ config, periodos, turmas, disciplinas, professores, indisponibilidades, distribuicao, aulas });
+  res.set('Cache-Control', 'no-store').json({
+    escola_id: E, escolas: req.escolas,
+    config, periodos, turmas, disciplinas, professores, indisponibilidades, distribuicao, aulas,
+  });
 }));
 
 // ---------- Configurações ----------
@@ -127,8 +164,8 @@ app.put('/api/config', rota(async (req, res) => {
   const maxDisc = req.body?.max_disc_dia === undefined ? 2 : Number(req.body.max_disc_dia);
   if (!Number.isInteger(maxDisc) || maxDisc < 1 || maxDisc > 10) return erro(res, 400, 'O máximo de aulas da mesma disciplina por dia deve ficar entre 1 e 10');
   const duplas = req.body?.preferir_duplas === true;
-  await db.run('UPDATE hor_config SET escola = ?, rede = ?, dias = ?, duracao_aula = ?, max_disc_dia = ?, preferir_duplas = ? WHERE id = 1',
-    escola, rede, dias, duracao, maxDisc, duplas);
+  await db.run('UPDATE hor_config SET escola = ?, rede = ?, dias = ?, duracao_aula = ?, max_disc_dia = ?, preferir_duplas = ? WHERE id = ?',
+    escola, rede, dias, duracao, maxDisc, duplas, req.escola);
   res.json({ ok: true });
 }));
 
@@ -140,22 +177,22 @@ function lerPeriodo(b) {
   if (fim <= inicio) return 'O fim precisa ser depois do início';
   return [turno, inicio, fim];
 }
-async function periodoSobreposto(turno, inicio, fim, ignorar = 0) {
-  return db.get('SELECT 1 FROM hor_periodos WHERE turno = ? AND inicio < ? AND fim > ? AND id <> ?', turno, fim, inicio, ignorar);
+async function periodoSobreposto(E, turno, inicio, fim, ignorar = 0) {
+  return db.get('SELECT 1 FROM hor_periodos WHERE escola_id = ? AND turno = ? AND inicio < ? AND fim > ? AND id <> ?', E, turno, fim, inicio, ignorar);
 }
 app.post('/api/periodos', rota(async (req, res) => {
   const p = lerPeriodo(req.body);
   if (typeof p === 'string') return erro(res, 400, p);
-  if (await periodoSobreposto(...p)) return erro(res, 400, 'Esse horário se sobrepõe a outra aula do mesmo turno');
-  const r = await db.run('INSERT INTO hor_periodos (turno, inicio, fim) VALUES (?, ?, ?) RETURNING id', ...p);
+  if (await periodoSobreposto(req.escola, ...p)) return erro(res, 400, 'Esse horário se sobrepõe a outra aula do mesmo turno');
+  const r = await db.run('INSERT INTO hor_periodos (escola_id, turno, inicio, fim) VALUES (?, ?, ?, ?) RETURNING id', req.escola, ...p);
   res.json({ id: r.id });
 }));
 app.put('/api/periodos/:id', rota(async (req, res) => {
   const id = num(req.params.id);
   const p = lerPeriodo(req.body);
   if (typeof p === 'string') return erro(res, 400, p);
-  if (await periodoSobreposto(...p, id)) return erro(res, 400, 'Esse horário se sobrepõe a outra aula do mesmo turno');
-  const r = await db.run('UPDATE hor_periodos SET turno = ?, inicio = ?, fim = ? WHERE id = ?', ...p, id);
+  if (await periodoSobreposto(req.escola, ...p, id)) return erro(res, 400, 'Esse horário se sobrepõe a outra aula do mesmo turno');
+  const r = await db.run('UPDATE hor_periodos SET turno = ?, inicio = ?, fim = ? WHERE id = ? AND escola_id = ?', ...p, id, req.escola);
   if (!r.changes) return erro(res, 404, 'Horário não encontrado');
   res.json({ ok: true });
 }));
@@ -164,14 +201,14 @@ app.post('/api/turmas', rota(async (req, res) => {
   const nome = texto(req.body?.nome, 60), turno = texto(req.body?.turno);
   if (!nome) return erro(res, 400, 'Informe o nome da turma');
   if (!TURNOS_TURMA.includes(turno)) return erro(res, 400, 'Escolha o turno');
-  const r = await db.run('INSERT INTO hor_turmas (nome, turno) VALUES (?, ?) RETURNING id', nome, turno);
+  const r = await db.run('INSERT INTO hor_turmas (escola_id, nome, turno) VALUES (?, ?, ?) RETURNING id', req.escola, nome, turno);
   res.json({ id: r.id });
 }));
 app.put('/api/turmas/:id', rota(async (req, res) => {
   const nome = texto(req.body?.nome, 60), turno = texto(req.body?.turno);
   if (!nome) return erro(res, 400, 'Informe o nome da turma');
   if (!TURNOS_TURMA.includes(turno)) return erro(res, 400, 'Escolha o turno');
-  const r = await db.run('UPDATE hor_turmas SET nome = ?, turno = ? WHERE id = ?', nome, turno, num(req.params.id));
+  const r = await db.run('UPDATE hor_turmas SET nome = ?, turno = ? WHERE id = ? AND escola_id = ?', nome, turno, num(req.params.id), req.escola);
   if (!r.changes) return erro(res, 404, 'Turma não encontrada');
   res.json({ ok: true });
 }));
@@ -179,14 +216,14 @@ app.put('/api/turmas/:id', rota(async (req, res) => {
 app.post('/api/disciplinas', rota(async (req, res) => {
   const nome = texto(req.body?.nome, 60);
   if (!nome) return erro(res, 400, 'Informe o nome da disciplina');
-  const { n } = await db.get('SELECT COUNT(*)::int n FROM hor_disciplinas');
-  const r = await db.run('INSERT INTO hor_disciplinas (nome, cor) VALUES (?, ?) RETURNING id', nome, n % 12);
+  const { n } = await db.get('SELECT COUNT(*)::int n FROM hor_disciplinas WHERE escola_id = ?', req.escola);
+  const r = await db.run('INSERT INTO hor_disciplinas (escola_id, nome, cor) VALUES (?, ?, ?) RETURNING id', req.escola, nome, n % 12);
   res.json({ id: r.id });
 }));
 app.put('/api/disciplinas/:id', rota(async (req, res) => {
   const nome = texto(req.body?.nome, 60);
   if (!nome) return erro(res, 400, 'Informe o nome da disciplina');
-  const r = await db.run('UPDATE hor_disciplinas SET nome = ? WHERE id = ?', nome, num(req.params.id));
+  const r = await db.run('UPDATE hor_disciplinas SET nome = ? WHERE id = ? AND escola_id = ?', nome, num(req.params.id), req.escola);
   if (!r.changes) return erro(res, 404, 'Disciplina não encontrada');
   res.json({ ok: true });
 }));
@@ -203,13 +240,14 @@ function lerProfessor(b) {
 app.post('/api/professores', rota(async (req, res) => {
   const p = lerProfessor(req.body);
   if (typeof p === 'string') return erro(res, 400, p);
-  const r = await db.run('INSERT INTO hor_professores (nome, jornada_horas, limite_aulas, max_aulas_dia) VALUES (?, ?, ?, ?) RETURNING id', ...p);
+  const r = await db.run('INSERT INTO hor_professores (escola_id, nome, jornada_horas, limite_aulas, max_aulas_dia) VALUES (?, ?, ?, ?, ?) RETURNING id', req.escola, ...p);
   res.json({ id: r.id });
 }));
 app.put('/api/professores/:id', rota(async (req, res) => {
   const p = lerProfessor(req.body);
   if (typeof p === 'string') return erro(res, 400, p);
-  const r = await db.run('UPDATE hor_professores SET nome = ?, jornada_horas = ?, limite_aulas = ?, max_aulas_dia = ? WHERE id = ?', ...p, num(req.params.id));
+  const r = await db.run('UPDATE hor_professores SET nome = ?, jornada_horas = ?, limite_aulas = ?, max_aulas_dia = ? WHERE id = ? AND escola_id = ?',
+    ...p, num(req.params.id), req.escola);
   if (!r.changes) return erro(res, 404, 'Professor não encontrado');
   res.json({ ok: true });
 }));
@@ -217,12 +255,14 @@ app.put('/api/professores/:id', rota(async (req, res) => {
 app.put('/api/professores/:id/indisponibilidades', rota(async (req, res) => {
   const id = num(req.params.id);
   const itens = Array.isArray(req.body?.itens) ? req.body.itens.slice(0, 500) : [];
-  if (!await db.get('SELECT 1 FROM hor_professores WHERE id = ?', id)) return erro(res, 404, 'Professor não encontrado');
+  if (!await db.get('SELECT 1 FROM hor_professores WHERE id = ? AND escola_id = ?', id, req.escola)) return erro(res, 404, 'Professor não encontrado');
+  // os horários precisam ser desta escola
+  const daqui = new Set((await db.all('SELECT id FROM hor_periodos WHERE escola_id = ?', req.escola)).map((p) => p.id));
+  const validos = itens.map((it) => [Number(it?.dia), num(it?.periodo_id)]).filter(([dia, per]) => diaValido(dia) && per);
+  if (validos.some(([, per]) => !daqui.has(per))) return erro(res, 400, 'Um dos horários escolhidos não existe mais. Atualize a página.');
   await transacao(async (q) => {
     await q.run('DELETE FROM hor_indisponibilidades WHERE professor_id = ?', id);
-    for (const it of itens) {
-      const dia = Number(it?.dia), per = num(it?.periodo_id);
-      if (!diaValido(dia) || !per) continue;
+    for (const [dia, per] of validos) {
       await q.run('INSERT INTO hor_indisponibilidades (professor_id, dia, periodo_id) VALUES (?, ?, ?) ON CONFLICT DO NOTHING', id, dia, per);
     }
   });
@@ -232,24 +272,25 @@ app.put('/api/professores/:id/indisponibilidades', rota(async (req, res) => {
 // Exclusões: apagam junto o que depende (aulas na grade etc.). O app pede confirmação antes.
 for (const [rotaNome, tabela] of [['periodos', 'hor_periodos'], ['turmas', 'hor_turmas'], ['disciplinas', 'hor_disciplinas'], ['professores', 'hor_professores']]) {
   app.delete(`/api/${rotaNome}/:id`, rota(async (req, res) => {
-    const r = await db.run(`DELETE FROM ${tabela} WHERE id = ?`, num(req.params.id));
+    const r = await db.run(`DELETE FROM ${tabela} WHERE id = ? AND escola_id = ?`, num(req.params.id), req.escola);
     if (!r.changes) return erro(res, 404, 'Item não encontrado');
     res.json({ ok: true });
   }));
 }
 
 // ---------- Distribuição (quem dá o quê em cada turma) ----------
-async function lerDistribuicao(b) {
-  const turma = num(b?.turma_id), disc = num(b?.disciplina_id), prof = num(b?.professor_id), n = Number(b?.aulas_semana);
-  if (!turma || !disc || !prof) return 'Escolha a turma, a disciplina e o professor';
-  if (!Number.isInteger(n) || n < 1 || n > 40) return 'Informe quantas aulas por semana (1 a 40)';
-  return [turma, disc, prof, n];
-}
+// Só aceita turma, disciplina e professor da escola atual
+const daEscola = (tabela, id, E) => db.get(`SELECT 1 FROM ${tabela} WHERE id = ? AND escola_id = ?`, id, E);
 app.post('/api/distribuicao', rota(async (req, res) => {
-  const d = await lerDistribuicao(req.body);
-  if (typeof d === 'string') return erro(res, 400, d);
+  const turma = num(req.body?.turma_id), disc = num(req.body?.disciplina_id), prof = num(req.body?.professor_id), n = Number(req.body?.aulas_semana);
+  if (!turma || !disc || !prof) return erro(res, 400, 'Escolha a turma, a disciplina e o professor');
+  if (!Number.isInteger(n) || n < 1 || n > 40) return erro(res, 400, 'Informe quantas aulas por semana (1 a 40)');
+  const E = req.escola;
+  if (!await daEscola('hor_turmas', turma, E) || !await daEscola('hor_disciplinas', disc, E) || !await daEscola('hor_professores', prof, E)) {
+    return erro(res, 400, 'Um dos itens escolhidos não existe mais. Atualize a página.');
+  }
   try {
-    const r = await db.run('INSERT INTO hor_distribuicao (turma_id, disciplina_id, professor_id, aulas_semana) VALUES (?, ?, ?, ?) RETURNING id', ...d);
+    const r = await db.run('INSERT INTO hor_distribuicao (turma_id, disciplina_id, professor_id, aulas_semana) VALUES (?, ?, ?, ?) RETURNING id', turma, disc, prof, n);
     res.json({ id: r.id });
   } catch (e) {
     if (e.code === '23505') return erro(res, 409, 'Essa disciplina já está na distribuição desta turma');
@@ -261,27 +302,30 @@ app.put('/api/distribuicao/:id', rota(async (req, res) => {
   const prof = num(req.body?.professor_id), n = Number(req.body?.aulas_semana);
   if (!prof) return erro(res, 400, 'Escolha o professor');
   if (!Number.isInteger(n) || n < 1 || n > 40) return erro(res, 400, 'Informe quantas aulas por semana (1 a 40)');
-  const r = await db.run('UPDATE hor_distribuicao SET professor_id = ?, aulas_semana = ? WHERE id = ?', prof, n, num(req.params.id));
+  if (!await daEscola('hor_professores', prof, req.escola)) return erro(res, 400, 'Professor não encontrado. Atualize a página.');
+  const r = await db.run(`UPDATE hor_distribuicao d SET professor_id = ?, aulas_semana = ? FROM hor_turmas t
+    WHERE d.id = ? AND t.id = d.turma_id AND t.escola_id = ?`, prof, n, num(req.params.id), req.escola);
   if (!r.changes) return erro(res, 404, 'Item não encontrado');
   res.json({ ok: true });
 }));
 app.delete('/api/distribuicao/:id', rota(async (req, res) => {
-  const r = await db.run('DELETE FROM hor_distribuicao WHERE id = ?', num(req.params.id));
+  const r = await db.run(`DELETE FROM hor_distribuicao d USING hor_turmas t
+    WHERE d.id = ? AND t.id = d.turma_id AND t.escola_id = ?`, num(req.params.id), req.escola);
   if (!r.changes) return erro(res, 404, 'Item não encontrado');
   res.json({ ok: true });
 }));
 
 // ---------- Grade ----------
-// Horários válidos para a turma: os do turno dela (Integral = Manhã + Tarde)
-const periodoDaTurma = (turmaId, periodoId) => db.get(
-  `SELECT 1 FROM hor_turmas t JOIN hor_periodos p ON p.id = ?
-   WHERE t.id = ? AND (p.turno = t.turno OR (t.turno = 'Integral' AND p.turno IN ('Manhã', 'Tarde')))`, periodoId, turmaId);
+// Horários válidos para a turma: os do turno dela (Integral = Manhã + Tarde), da mesma escola
+const periodoDaTurma = (turmaId, periodoId, E) => db.get(
+  `SELECT 1 FROM hor_turmas t JOIN hor_periodos p ON p.id = ? AND p.escola_id = t.escola_id
+   WHERE t.id = ? AND t.escola_id = ? AND (p.turno = t.turno OR (t.turno = 'Integral' AND p.turno IN ('Manhã', 'Tarde')))`, periodoId, turmaId, E);
 
 app.put('/api/aulas', rota(async (req, res) => {
   const turma = num(req.body?.turma_id), per = num(req.body?.periodo_id), dia = Number(req.body?.dia);
   const dist = req.body?.distribuicao_id ? num(req.body.distribuicao_id) : null;
   if (!turma || !per || !diaValido(dia)) return erro(res, 400, 'Célula da grade inválida');
-  if (!await periodoDaTurma(turma, per)) return erro(res, 400, 'Esse horário não é do turno desta turma');
+  if (!await periodoDaTurma(turma, per, req.escola)) return erro(res, 400, 'Esse horário não é do turno desta turma');
   if (dist === null) {
     await db.run('DELETE FROM hor_aulas WHERE turma_id = ? AND dia = ? AND periodo_id = ?', turma, dia, per);
     return res.json({ ok: true });
@@ -297,6 +341,7 @@ app.put('/api/aulas', rota(async (req, res) => {
 // Trava/destrava uma aula (o gerador e as sugestões não mexem em aula fixa)
 app.post('/api/aulas/fixar', rota(async (req, res) => {
   const turma = num(req.body?.turma_id), per = num(req.body?.periodo_id), dia = Number(req.body?.dia);
+  if (!await daEscola('hor_turmas', turma, req.escola)) return erro(res, 404, 'Aula não encontrada');
   const r = await db.run('UPDATE hor_aulas SET fixa = ? WHERE turma_id = ? AND dia = ? AND periodo_id = ?', req.body?.fixa === true, turma, dia, per);
   if (!r.changes) return erro(res, 404, 'Aula não encontrada');
   res.json({ ok: true });
@@ -304,18 +349,20 @@ app.post('/api/aulas/fixar', rota(async (req, res) => {
 // Várias mudanças de uma vez, tudo ou nada (gerador automático e "Resolver").
 // limpar_turmas: apaga antes as aulas NÃO fixas dessas turmas nos dias letivos.
 // alteracoes: [{turma_id, dia, periodo_id, distribuicao_id}] (distribuicao_id vazio = deixar vago).
-// Aulas fixas nunca são alteradas por aqui.
+// Aulas fixas nunca são alteradas por aqui. Só vale para turmas da escola atual.
 class ErroLote extends Error {}
 app.post('/api/aulas/lote', rota(async (req, res) => {
   const lista = req.body?.alteracoes;
   if (!Array.isArray(lista) || lista.length > 5000) return erro(res, 400, 'Lista de alterações inválida');
-  const limpar = Array.isArray(req.body?.limpar_turmas) ? [...new Set(req.body.limpar_turmas.map(num).filter(Boolean))] : [];
+  const E = req.escola;
   try {
     const r = await transacao(async (q) => {
-      const turmas = new Map((await q.all('SELECT id, turno FROM hor_turmas')).map((t) => [t.id, t.turno]));
-      const pers = new Map((await q.all('SELECT id, turno FROM hor_periodos')).map((p) => [p.id, p.turno]));
-      const dists = new Map((await q.all('SELECT id, turma_id FROM hor_distribuicao')).map((d) => [d.id, d.turma_id]));
-      const { dias } = await q.get('SELECT dias FROM hor_config WHERE id = 1');
+      const turmas = new Map((await q.all('SELECT id, turno FROM hor_turmas WHERE escola_id = ?', E)).map((t) => [t.id, t.turno]));
+      const pers = new Map((await q.all('SELECT id, turno FROM hor_periodos WHERE escola_id = ?', E)).map((p) => [p.id, p.turno]));
+      const dists = new Map((await q.all('SELECT d.id, d.turma_id FROM hor_distribuicao d JOIN hor_turmas t ON t.id = d.turma_id WHERE t.escola_id = ?', E))
+        .map((d) => [d.id, d.turma_id]));
+      const { dias } = await q.get('SELECT dias FROM hor_config WHERE id = ?', E);
+      const limpar = Array.isArray(req.body?.limpar_turmas) ? [...new Set(req.body.limpar_turmas.map(num))].filter((t) => turmas.has(t)) : [];
       // a última mudança de cada célula é a que vale
       const final = new Map();
       for (const a of lista) {
@@ -352,52 +399,13 @@ app.post('/api/aulas/lote', rota(async (req, res) => {
 
 // Limpa toda a grade de uma turma
 app.delete('/api/turmas/:id/aulas', rota(async (req, res) => {
-  const r = await db.run('DELETE FROM hor_aulas WHERE turma_id = ? AND NOT fixa', num(req.params.id));
+  const id = num(req.params.id);
+  if (!await daEscola('hor_turmas', id, req.escola)) return erro(res, 404, 'Turma não encontrada');
+  const r = await db.run('DELETE FROM hor_aulas WHERE turma_id = ? AND NOT fixa', id);
   res.json({ ok: true, apagadas: r.changes });
 }));
 
-// ---------- Equipe da coordenação (logins) ----------
-const gerarSenha = () => {
-  const c = 'abcdefghjkmnpqrstuvwxyz23456789';
-  return Array.from(crypto.randomBytes(8), (b) => c[b % c.length]).join('');
-};
-app.get('/api/usuarios', rota(async (req, res) => {
-  res.json(await db.all('SELECT id, nome, login, cargo, ultimo_acesso, arquivado_em FROM hor_usuarios ORDER BY arquivado_em NULLS FIRST, nome'));
-}));
-app.post('/api/usuarios', rota(async (req, res) => {
-  const nome = texto(req.body?.nome, 80), login = texto(req.body?.login, 80).toLowerCase(), cargo = texto(req.body?.cargo, 60) || null;
-  if (!nome) return erro(res, 400, 'Informe o nome');
-  if (!/^[a-z0-9._@-]{3,80}$/.test(login)) return erro(res, 400, 'O login deve ter pelo menos 3 letras ou números, sem espaços (pode ser o e-mail)');
-  const senha = gerarSenha();
-  try {
-    await db.run('INSERT INTO hor_usuarios (nome, login, senha_hash, cargo) VALUES (?, ?, ?, ?)', nome, login, hashPassword(senha), cargo);
-  } catch (e) {
-    if (e.code === '23505') return erro(res, 409, 'Esse login já está em uso');
-    throw e;
-  }
-  res.json({ login, senha });
-}));
-app.post('/api/usuarios/:id/nova-senha', rota(async (req, res) => {
-  const id = num(req.params.id);
-  const senha = gerarSenha();
-  const u = await db.get('UPDATE hor_usuarios SET senha_hash = ? WHERE id = ? RETURNING login', hashPassword(senha), id);
-  if (!u) return erro(res, 404, 'Pessoa não encontrada');
-  await db.run('DELETE FROM hor_sessoes WHERE usuario_id = ?', id);
-  res.json({ login: u.login, senha });
-}));
-app.post('/api/usuarios/:id/arquivar', rota(async (req, res) => {
-  const id = num(req.params.id);
-  if (id === req.user.id) return erro(res, 400, 'Você não pode desativar o próprio acesso');
-  const ativo = req.body?.ativo === true;
-  if (!ativo) {
-    const { n } = await db.get('SELECT COUNT(*)::int n FROM hor_usuarios WHERE arquivado_em IS NULL AND id <> ?', id);
-    if (n === 0) return erro(res, 400, 'Precisa ficar pelo menos uma pessoa com acesso');
-  }
-  const r = await db.run(`UPDATE hor_usuarios SET arquivado_em = ${ativo ? 'NULL' : 'now()'} WHERE id = ?`, id);
-  if (!r.changes) return erro(res, 404, 'Pessoa não encontrada');
-  if (!ativo) await db.run('DELETE FROM hor_sessoes WHERE usuario_id = ?', id);
-  res.json({ ok: true });
-}));
+// Logins novos só são criados pelo administrador (roteiro demo/criar-usuario.mjs), nunca pelo app.
 
 app.use('/api', (req, res) => erro(res, 404, 'Rota não encontrada'));
 

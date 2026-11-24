@@ -4,16 +4,15 @@
 // Só é usado na página de demonstração; o sistema real usa server.js + PostgreSQL.
 // =====================================================================
 (() => {
-  const CHAVE = 'horario_demo_db_v1';
+  const CHAVE = 'horario_demo_db_v2';
   const TURNOS_P = ['Manhã', 'Tarde', 'Noite'];
   const TURNOS_T = [...TURNOS_P, 'Integral'];
   const HORA = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
 
   function exemplo() {
-    const d = { v: 1, seq: {}, sessoes: {}, usuarios: [], config: null, periodos: [], turmas: [], disciplinas: [], professores: [], indisponibilidades: [], distribuicao: [], aulas: [] };
+    const d = { seq: {}, config: null, periodos: [], turmas: [], disciplinas: [], professores: [], indisponibilidades: [], distribuicao: [], aulas: [] };
     const novo = (tab, obj) => { d.seq[tab] = (d.seq[tab] || 0) + 1; const o = { id: d.seq[tab], ...obj }; d[tab].push(o); return o; };
     d.config = { escola: 'Escola Exemplo', rede: 'particular', dias: [1, 2, 3, 4, 5], duracao_aula: 50, max_disc_dia: 2, preferir_duplas: false };
-    novo('usuarios', { nome: 'Coordenação Pedagógica', login: 'coordenacao@escola.com', senha: '123456', cargo: 'Coordenadora', ultimo_acesso: null, arquivado_em: null });
     const manha = [['07:00', '07:50'], ['07:50', '08:40'], ['08:40', '09:30'], ['09:50', '10:40'], ['10:40', '11:30']].map(([i, f]) => novo('periodos', { turno: 'Manhã', inicio: i, fim: f }).id);
     [['13:00', '13:50'], ['13:50', '14:40'], ['14:40', '15:30'], ['15:50', '16:40'], ['16:40', '17:30']].forEach(([i, f]) => novo('periodos', { turno: 'Tarde', inicio: i, fim: f }));
     const T = {};
@@ -53,14 +52,24 @@
     d.aulas.push({ turma_id: T['7º Ano A'], dia: 1, periodo_id: manha[1], distribuicao_id: D['7º Ano A|Matemática'], fixa: false });
     return d;
   }
+  // Tudo da demonstração: logins e várias escolas (cada escola com os próprios dados)
+  function inicial() {
+    const um = exemplo();
+    const dois = { seq: { periodos: um.periodos.length }, config: { ...um.config, escola: 'Colégio Modelo — Unidade 2' },
+      periodos: um.periodos.map((p) => ({ ...p })), turmas: [], disciplinas: [], professores: [], indisponibilidades: [], distribuicao: [], aulas: [] };
+    return { v: 2, seqEscola: 2, sessoes: {}, escolaDe: {},
+      usuarios: [{ id: 1, nome: 'Coordenação Pedagógica', login: 'coordenacao@escola.com', senha: '123456', cargo: 'Coordenadora', escolas: [1, 2] }],
+      escolas: { 1: um, 2: dois } };
+  }
 
-  let db = null;
-  try { db = JSON.parse(localStorage.getItem(CHAVE)); } catch { db = null; }
-  if (!db || db.v !== 1) db = exemplo();
-  const gravar = () => { try { localStorage.setItem(CHAVE, JSON.stringify(db)); } catch { /* sem armazenamento: só nesta aba */ } };
+  let raiz = null;
+  try { raiz = JSON.parse(localStorage.getItem(CHAVE)); } catch { raiz = null; }
+  if (!raiz || raiz.v !== 2) raiz = inicial();
+  let db = null; // a escola atual de cada pedido
+  const gravar = () => { try { localStorage.setItem(CHAVE, JSON.stringify(raiz)); } catch { /* sem armazenamento: só nesta aba */ } };
   window.__restaurarDemo = () => {
-    try { localStorage.removeItem(CHAVE); localStorage.removeItem('horario_token'); localStorage.removeItem('horario_aba'); localStorage.removeItem('horario_turma'); } catch { /* ignora */ }
-    db = exemplo();
+    try { localStorage.removeItem(CHAVE); localStorage.removeItem('horario_token'); localStorage.removeItem('horario_aba'); localStorage.removeItem('horario_turma'); localStorage.removeItem('horario_escola'); } catch { /* ignora */ }
+    raiz = inicial();
     location.reload();
   };
 
@@ -77,7 +86,6 @@
   };
   const turnoCabe = (turmaTurno, perTurno) => perTurno === turmaTurno || (turmaTurno === 'Integral' && (perTurno === 'Manhã' || perTurno === 'Tarde'));
   const ordemTurno = (t) => TURNOS_P.indexOf(t);
-  const gerarSenha = () => Array.from({ length: 8 }, () => 'abcdefghjkmnpqrstuvwxyz23456789'[Math.floor(Math.random() * 31)]).join('');
 
   // exclusões em cascata (como no banco real)
   function apagarDist(ids) {
@@ -102,22 +110,36 @@
     return { nome, jornada_horas: j, limite_aulas: l, max_aulas_dia: md };
   }
 
-  function rotear(metodo, caminho, b, token) {
+  function rotear(metodo, caminho, b, token, pedida) {
     const r = (re) => caminho.match(re);
     if (metodo === 'POST' && caminho === '/login') {
       const login = texto(b.login).toLowerCase();
-      const u = db.usuarios.find((x) => x.login.toLowerCase() === login);
+      const u = raiz.usuarios.find((x) => x.login.toLowerCase() === login);
       if (!u || u.senha !== String(b.senha ?? '')) falha(401, 'Usuário ou senha inválidos');
-      if (u.arquivado_em) falha(403, 'Acesso desativado. Fale com a coordenação.');
       const tk = Math.random().toString(36).slice(2) + Date.now().toString(36);
-      db.sessoes[tk] = u.id;
-      u.ultimo_acesso = new Date().toISOString();
+      raiz.sessoes[tk] = u.id;
       return { token: tk, usuario: { id: u.id, nome: u.nome, login: u.login } };
     }
-    const eu = db.usuarios.find((x) => x.id === db.sessoes[token] && !x.arquivado_em);
+    const eu = raiz.usuarios.find((x) => x.id === raiz.sessoes[token]);
     if (!eu) falha(401, 'Sessão expirada. Entre novamente.');
+    // escola do pedido: a escolhida, se a pessoa tiver acesso; senão a mais antiga
+    const E = eu.escolas.includes(pedida) ? pedida : Math.min(...eu.escolas);
+    db = raiz.escolas[E];
+    const escolas = eu.escolas.map((id) => ({ id, nome: raiz.escolas[id].config.escola }))
+      .sort((a, b2) => a.nome.localeCompare(b2.nome) || a.id - b2.id);
 
-    if (metodo === 'POST' && caminho === '/logout') { delete db.sessoes[token]; return { ok: true }; }
+    if (metodo === 'POST' && caminho === '/logout') { delete raiz.sessoes[token]; return { ok: true }; }
+    if (metodo === 'POST' && caminho === '/escolas') {
+      const nome = texto(b.nome);
+      if (!nome) falha(400, 'Informe o nome da escola');
+      const id = ++raiz.seqEscola;
+      const copiar = b.copiar === true;
+      raiz.escolas[id] = { seq: { periodos: copiar ? db.periodos.length : 0 },
+        config: copiar ? { ...db.config, escola: nome } : { escola: nome, rede: 'particular', dias: [1, 2, 3, 4, 5], duracao_aula: 50, max_disc_dia: 2, preferir_duplas: false },
+        periodos: copiar ? db.periodos.map((p, i) => ({ ...p, id: i + 1 })) : [], turmas: [], disciplinas: [], professores: [], indisponibilidades: [], distribuicao: [], aulas: [] };
+      eu.escolas.push(id);
+      return { id };
+    }
     if (metodo === 'GET' && caminho === '/me') return { id: eu.id, nome: eu.nome, login: eu.login, cargo: eu.cargo };
     if (metodo === 'PUT' && caminho === '/me/senha') {
       if (String(b.atual) !== eu.senha) falha(400, 'A senha atual está incorreta');
@@ -130,6 +152,7 @@
     if (metodo === 'GET' && caminho === '/dados') {
       const c = JSON.parse(JSON.stringify(db));
       return {
+        escola_id: E, escolas,
         config: c.config,
         periodos: c.periodos.sort((a, b2) => ordemTurno(a.turno) - ordemTurno(b2.turno) || (a.inicio < b2.inicio ? -1 : 1)),
         turmas: c.turmas.sort((a, b2) => a.nome.localeCompare(b2.nome)),
@@ -295,32 +318,6 @@
       }
       return { ok: true, alteradas: finais.size };
     }
-    // ---- equipe
-    if (caminho === '/usuarios' && metodo === 'GET') {
-      return db.usuarios.map(({ senha, ...u }) => u).sort((a, b2) => (a.arquivado_em ? 1 : 0) - (b2.arquivado_em ? 1 : 0) || a.nome.localeCompare(b2.nome));
-    }
-    if (caminho === '/usuarios' && metodo === 'POST') {
-      const nome = texto(b.nome, 80), login = texto(b.login, 80).toLowerCase();
-      if (!nome) falha(400, 'Informe o nome');
-      if (!/^[a-z0-9._@-]{3,80}$/.test(login)) falha(400, 'O login deve ter pelo menos 3 letras ou números, sem espaços (pode ser o e-mail)');
-      if (db.usuarios.some((u) => u.login === login)) falha(409, 'Esse login já está em uso');
-      const senha = gerarSenha();
-      db.usuarios.push({ id: novoId('usuarios'), nome, login, senha, cargo: texto(b.cargo, 60) || null, ultimo_acesso: null, arquivado_em: null });
-      return { login, senha };
-    }
-    m = r(/^\/usuarios\/(\d+)\/nova-senha$/);
-    if (m && metodo === 'POST') { const u = achar('usuarios', num(m[1])); u.senha = gerarSenha(); return { login: u.login, senha: u.senha }; }
-    m = r(/^\/usuarios\/(\d+)\/arquivar$/);
-    if (m && metodo === 'POST') {
-      const u = achar('usuarios', num(m[1]));
-      if (u.id === eu.id) falha(400, 'Você não pode desativar o próprio acesso');
-      if (b.ativo === true) u.arquivado_em = null;
-      else {
-        if (!db.usuarios.some((x) => x.id !== u.id && !x.arquivado_em)) falha(400, 'Precisa ficar pelo menos uma pessoa com acesso');
-        u.arquivado_em = new Date().toISOString();
-      }
-      return { ok: true };
-    }
     falha(404, 'Rota não encontrada');
   }
 
@@ -332,13 +329,14 @@
     const token = String(opts.headers?.Authorization || '').replace(/^Bearer /, '');
     let corpo = {};
     try { corpo = opts.body ? JSON.parse(opts.body) : {}; } catch { corpo = {}; }
-    const copia = JSON.stringify(db);
+    const copia = JSON.stringify(raiz);
+    const pedida = Number(opts.headers?.['X-Escola']) || 0;
     try {
-      const r = rotear(metodo, u.slice(4), corpo, token);
+      const r = rotear(metodo, u.slice(4), corpo, token, pedida);
       gravar();
       return new Response(JSON.stringify(r), { status: 200, headers: { 'Content-Type': 'application/json' } });
     } catch (e) {
-      db = JSON.parse(copia); // tudo ou nada, como a transação do banco
+      raiz = JSON.parse(copia); // tudo ou nada, como a transação do banco
       const status = e instanceof Erro ? e.status : 500;
       return new Response(JSON.stringify({ erro: e instanceof Erro ? e.message : 'Erro inesperado. Tente de novo.' }), { status, headers: { 'Content-Type': 'application/json' } });
     }

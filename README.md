@@ -38,7 +38,12 @@ Acesso de teste: `coordenacao@escola.com`, senha `123456`. **Troque a senha (ou 
    mover para um horário vago, trocar com outra aula da turma, ou passar a disciplina para outro professor livre. Também lista os professores livres naquele horário.
    "Aula a mais" oferece qual aula tirar; "Falta colocar" tem **Completar com o gerador**.
 8. **Impressão**: botão "Imprimir" (A4 deitado) na grade da turma e na do professor.
-9. **Equipe**: logins da coordenação (senha gerada sozinha, nova senha, desativar).
+9. **Várias escolas e clientes separados**: cada login vê só as escolas a que tem acesso (tabela `hor_usuario_escola`);
+   turmas, professores, disciplinas, horários e grade pertencem a uma escola (`escola_id`). No menu, **Suas escolas** troca de escola
+   com um clique (o app manda o cabeçalho `X-Escola`; o servidor confere o acesso). **Nova escola** pode copiar os horários e as regras da atual.
+   - Logins **só o administrador cria**, fora do app: `node demo/criar-usuario.mjs <login> <senha> "<nome>" "<nome da escola>"`
+     (cria o login com uma escola própria e vazia; com login existente, troca a senha e, se informar a escola, cria mais uma para ele).
+   - Cópia de segurança (só leitura) das tabelas: `node demo/copiar-dados.mjs` → `backups/` (fora do git).
 10. **Configurações**: nome da escola, dias de aula, duração da aula e a regra de carga:
    - *Particular*: avisa quando passa do limite de aulas do professor.
    - *Pública*: também avisa quando as aulas passam de 2/3 da jornada (Lei 11.738/2008, Lei do Piso).

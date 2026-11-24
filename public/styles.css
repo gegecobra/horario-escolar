@@ -214,6 +214,27 @@ label.campo small { font-weight: 400; color: var(--muted); }
 .user-card .icone-btn, .topo-movel .icone-btn { color: var(--side-muted); }
 .user-card .icone-btn:hover, .topo-movel .icone-btn:hover { background: var(--side-hover); color: #fff; }
 .topo-movel { display: none; }
+
+/* ================= Escolas (troca com um clique) ================= */
+.escolas.no-topo { display: none; }
+.escolas.no-menu { display: grid; gap: 6px; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, .08); }
+.escolas-rot { font-size: .7rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--side-muted); padding: 0 8px; }
+.escolas-lista { position: relative; display: grid; gap: 3px; max-height: 32vh; overflow-y: auto; }
+.escola-btn {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; padding: 7px 8px; border: 0; border-radius: 12px;
+  background: none; color: var(--side-ink); font: inherit; font-size: .86rem; font-weight: 600; text-align: left; cursor: pointer;
+}
+.escola-btn:hover { background: var(--side-hover); }
+.escola-btn .escola-nome { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.escola-ini {
+  flex: none; width: 28px; height: 28px; border-radius: 9px; display: grid; place-items: center;
+  font-size: .7rem; font-weight: 800; background: rgba(255, 255, 255, .1); color: var(--creme);
+}
+.escola-btn.ativo { background: rgba(229, 163, 45, .16); color: #fff; box-shadow: inset 0 0 0 1.5px rgba(229, 163, 45, .55); }
+.escola-btn.ativo .escola-ini { background: var(--mostarda); color: var(--verde); }
+.escola-btn.nova { color: var(--side-muted); font-weight: 600; }
+.escola-btn.nova .i { width: 28px; height: 18px; flex: none; }
+.escola-btn.nova:hover { color: #fff; }
 .nav-item .curto { display: none; }
 
 main.conteudo { padding: 36px 40px 56px; width: 100%; max-width: 1280px; margin: 0 auto; min-width: 0; }
@@ -425,7 +446,20 @@ dialog#modal::backdrop { background: rgba(8, 26, 18, .55); backdrop-filter: blur
     padding: 6px max(8px, env(safe-area-inset-right, 0px)) calc(6px + env(safe-area-inset-bottom, 0px)) max(8px, env(safe-area-inset-left, 0px));
     box-shadow: 0 -10px 30px -12px rgba(0, 0, 0, .4);
   }
-  .sidebar .brand, .sidebar .user-card { display: none; }
+  .sidebar .brand, .sidebar .user-card, .escolas.no-menu { display: none; }
+  /* escolas em fileira no alto da página, um toque troca */
+  .escolas.no-topo { display: block; margin: -6px 0 18px; }
+  .escolas.no-topo .escolas-rot { display: none; }
+  .escolas.no-topo .escolas-lista { display: flex; gap: 8px; overflow-x: auto; max-height: none; padding-bottom: 4px; scrollbar-width: none; }
+  .escolas.no-topo .escola-btn {
+    width: auto; flex: none; max-width: 70vw; padding: 6px 12px 6px 6px; border-radius: 999px;
+    background: var(--surface); color: var(--ink-2); box-shadow: inset 0 0 0 1px var(--line);
+  }
+  .escolas.no-topo .escola-ini { width: 26px; height: 26px; border-radius: 50%; background: var(--surface-2); color: var(--ink-2); }
+  .escolas.no-topo .escola-btn.ativo { background: var(--verde); color: #fff; box-shadow: none; }
+  .escolas.no-topo .escola-btn.ativo .escola-ini { background: var(--mostarda); color: var(--verde); }
+  .escolas.no-topo .escola-btn.nova { color: var(--link); padding-left: 10px; }
+  .escolas.no-topo .escola-btn.nova .i { width: 18px; }
   .nav { flex-direction: row; justify-content: space-between; gap: 2px; min-width: 0; }
   .nav-item { flex: 1; min-width: 0; flex-direction: column; gap: 3px; padding: 7px 2px; font-size: .64rem; font-weight: 700; border-radius: 12px; position: relative; align-items: center; text-align: center; }
   .nav-item .longo { display: none; }
@@ -450,7 +484,7 @@ dialog#modal::backdrop { background: rgba(8, 26, 18, .55); backdrop-filter: blur
   @page { size: A4 landscape; margin: 10mm; }
   :root { --cel-s: 48%; --cel-l: 92%; --cel-b: 75%; --cel-t: 22%; --surface: #fff; --line: #d9d2c0; --ink: #102a1f; --muted: #555; }
   body { background: #fff; }
-  .sidebar, .topo-movel, .nao-imprimir, .toolbar, .colunas > aside, .legenda, #toast, .pg-cab, .previa, .faltou { display: none !important; }
+  .sidebar, .topo-movel, .escolas, .nao-imprimir, .toolbar, .colunas > aside, .legenda, #toast, .pg-cab, .previa, .faltou { display: none !important; }
   .app { display: block; }
   main.conteudo { padding: 0; max-width: none; }
   .colunas { display: block; }

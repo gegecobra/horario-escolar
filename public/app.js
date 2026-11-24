@@ -43,6 +43,7 @@ const state = {
   aba: storage.get('horario_aba') || 'grade',
   dados: null,
   calc: null,
+  escolaId: Number(storage.get('horario_escola')) || 0,
   turmaId: Number(storage.get('horario_turma')) || 0,
   profId: 0,
   cad: 'turmas',
@@ -61,6 +62,7 @@ const HUES = [150, 38, 12, 205, 285, 85, 340, 175, 24, 228, 55, 0];
 async function api(caminho, { method = 'GET', body } = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (state.token) headers.Authorization = 'Bearer ' + state.token;
+  if (state.escolaId) headers['X-Escola'] = String(state.escolaId);
   const res = await fetch('/api' + caminho, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const data = await res.json().catch(() => ({}));
   if (res.status === 401 && caminho !== '/login') { sairLocal(); throw new Error(data.erro || 'Sessão expirada'); }
@@ -144,6 +146,8 @@ const confirmar = (titulo, texto, botao = 'Excluir') => new Promise((ok) => {
 // ================= Dados e cálculo dos avisos =================
 async function carregar() {
   state.dados = await api('/dados');
+  state.escolaId = state.dados.escola_id;
+  storage.set('horario_escola', state.escolaId);
   calcular();
 }
 async function salvar(fn, msg) {
@@ -332,17 +336,40 @@ const ABAS = [
   ['professor', 'user', 'Por professor', 'Professor'],
   ['avisos', 'triangle', 'Avisos', 'Avisos'],
   ['cadastros', 'layers', 'Cadastros', 'Cadastros'],
-  ['equipe', 'users', 'Equipe', 'Equipe'],
   ['config', 'settings', 'Configurações', 'Ajustes'],
 ];
 const iniciais = (nome) => String(nome || '?').split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]).join('').toUpperCase();
-// Nome da escola embaixo da marca: não aparece enquanto for o nome de exemplo
-const nomeEscola = () => {
-  const n = String(state.dados?.config?.escola || '').trim();
-  return !n || /^(escola exemplo|minha escola)$/i.test(n) ? '' : `<small>${esc(n)}</small>`;
-};
+// Escolas da pessoa: um clique troca de escola
+function seletorEscolas(cls) {
+  const atual = state.dados.escola_id;
+  return `<div class="escolas ${cls}" role="group" aria-label="Escolas">
+    <span class="escolas-rot">${state.dados.escolas.length > 1 ? 'Suas escolas' : 'Sua escola'}</span>
+    <div class="escolas-lista">
+      ${state.dados.escolas.map((e) => `<button class="escola-btn ${e.id === atual ? 'ativo' : ''}" data-escola="${e.id}" title="${esc(e.nome)}"${e.id === atual ? ' aria-current="true"' : ''}>
+        <span class="escola-ini">${esc(iniciais(e.nome))}</span><span class="escola-nome">${esc(e.nome)}</span></button>`).join('')}
+      <button class="escola-btn nova" data-acao="nova-escola" title="Criar outra escola">${icon('plus')}<span class="escola-nome">Nova escola</span></button>
+    </div>
+  </div>`;
+}
+async function trocarEscola(id) {
+  if (id === state.dados.escola_id) return;
+  if (state.previa) return toast('Há uma prévia do gerador na tela. Aplique ou descarte antes de trocar de escola.', true);
+  const antes = state.escolaId;
+  state.escolaId = id;
+  state.editandoIndisp = null; state.turmaId = 0; state.profId = 0; state.distTurma = 0;
+  try {
+    await carregar();
+  } catch (e) {
+    state.escolaId = antes;
+    return toast(e.message, true);
+  }
+  render();
+  window.scrollTo(0, 0);
+  toast('Agora em: ' + state.dados.config.escola);
+}
 function render() {
   if (!state.token || !state.user || !state.dados) return renderLogin();
+  if (!ABAS.some(([id]) => id === state.aba)) state.aba = 'grade';
   const av = state.calc.avisos;
   const erros = av.filter((a) => a.nivel === 'erro').length;
   const atencao = av.filter((a) => a.nivel === 'atencao').length;
@@ -350,16 +377,17 @@ function render() {
   $app.innerHTML = `
     <div class="app">
       <header class="topo-movel">
-        <div class="brand"><img class="emblema" src="fonsario-emblema.png" alt=""><span>Fonsário${nomeEscola()}</span></div>
+        <div class="brand"><img class="emblema" src="fonsario-emblema.png" alt=""><span>Fonsário</span></div>
         <button class="icone-btn" data-acao="tema" title="Tema claro/escuro" aria-label="Tema claro/escuro">${icon(tema() === 'dark' ? 'sun' : 'moon')}</button>
         <button class="icone-btn" data-acao="sair" title="Sair" aria-label="Sair">${icon('logout')}</button>
       </header>
       <aside class="sidebar">
-        <div class="brand"><img class="emblema" src="fonsario-emblema.png" alt=""><span>Fonsário${nomeEscola()}</span></div>
+        <div class="brand"><img class="emblema" src="fonsario-emblema.png" alt=""><span>Fonsário</span></div>
         <nav class="nav">
           ${ABAS.map(([id, ic, rot, curto]) => `<button class="nav-item ${state.aba === id ? 'ativo' : ''}" data-aba="${id}" title="${rot}">
             ${icon(ic)}<span class="rot" data-curto="${curto}"><span class="longo">${rot}</span><span class="curto">${curto}</span></span>${id === 'avisos' ? badge : ''}</button>`).join('')}
         </nav>
+        ${seletorEscolas('no-menu')}
         <div class="user-card">
           <span class="avatar">${esc(iniciais(state.user.nome))}</span>
           <div class="quem" title="${esc(state.user.nome)}"><strong>${esc(state.user.nome)}</strong><span>${esc(state.user.cargo || state.user.login)}</span></div>
@@ -372,9 +400,13 @@ function render() {
       <main class="conteudo" id="conteudo"></main>
     </div>`;
   const c = document.getElementById('conteudo');
-  const telas = { grade: telaGrade, professor: telaProfessor, avisos: telaAvisos, cadastros: telaCadastros, equipe: telaEquipe, config: telaConfig };
+  const telas = { grade: telaGrade, professor: telaProfessor, avisos: telaAvisos, cadastros: telaCadastros, config: telaConfig };
   (telas[state.aba] || telaGrade)(c);
   if (state.previa) c.insertAdjacentHTML('afterbegin', bannerPrevia());
+  c.insertAdjacentHTML('afterbegin', seletorEscolas('no-topo'));
+  // no celular, deixa a escola atual visível na fileira
+  const fileira = c.querySelector('.no-topo .escolas-lista'), ativa = fileira?.querySelector('.ativo');
+  if (fileira && ativa && fileira.scrollWidth > fileira.clientWidth) fileira.scrollLeft = ativa.offsetLeft - 16;
 }
 
 // ================= Gerador automático =================
@@ -953,37 +985,6 @@ function formPeriodo(p = {}) {
   });
 }
 
-// ================= Equipe =================
-async function telaEquipe(c) {
-  c.innerHTML = `<div class="pg-cab"><div><h1>Equipe</h1><p>Quem pode entrar e montar o horário.</p></div>${botaoNovo('nova-pessoa', 'Nova pessoa')}</div><div class="card"><p class="muted">Carregando…</p></div>`;
-  let us;
-  try { us = await api('/usuarios'); } catch (e) { return toast(e.message, true); }
-  if (state.aba !== 'equipe') return;
-  c.querySelector('.card').innerHTML = `<div class="tabela-scroll"><table class="lista"><thead><tr><th>Nome</th><th>Login</th><th>Último acesso</th><th></th></tr></thead><tbody>
-    ${us.map((u) => `<tr style="${u.arquivado_em ? 'opacity:.55' : ''}">
-      <td><strong>${esc(u.nome)}</strong>${u.cargo ? `<br><span class="muted peq">${esc(u.cargo)}</span>` : ''}${u.arquivado_em ? ' <span class="pill neutro">desativado</span>' : ''}</td>
-      <td>${esc(u.login)}</td>
-      <td class="peq">${u.ultimo_acesso ? new Date(u.ultimo_acesso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '<span class="muted">nunca</span>'}</td>
-      <td class="acoes-td">${u.id === state.user.id ? '<span class="muted peq">você</span>' : `
-        <button class="icone-btn" data-acao="nova-senha" data-id="${u.id}" data-nome="${esc(u.nome)}" title="Gerar nova senha">${icon('key')}</button>
-        <button class="icone-btn ${u.arquivado_em ? '' : 'perigo'}" data-acao="ativar" data-id="${u.id}" data-ativo="${u.arquivado_em ? '1' : ''}" title="${u.arquivado_em ? 'Reativar' : 'Desativar acesso'}">${icon(u.arquivado_em ? 'restore' : 'ban')}</button>`}</td>
-    </tr>`).join('')}</tbody></table></div>`;
-}
-
-function mostrarSenha(titulo, r) {
-  modal({
-    titulo, semRodape: true,
-    corpo: `<p class="muted">Passe estes dados para a pessoa. A senha não aparece de novo; ela pode trocar depois em Configurações.</p>
-      <label class="campo">Login<div class="senha-box" style="font-size:1rem">${esc(r.login)}</div></label>
-      <label class="campo">Senha<div class="senha-box">${esc(r.senha)}</div></label>
-      <div class="modal-rodape"><button type="button" class="btn" data-copiar>Copiar</button><button type="button" class="btn primario" data-fechar>Pronto</button></div>`,
-  });
-  $modal.querySelector('[data-fechar]:last-child')?.addEventListener('click', () => $modal.close());
-  $modal.querySelector('[data-copiar]').addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText(`Fonsário\nLogin: ${r.login}\nSenha: ${r.senha}\n${location.origin}`); toast('Copiado'); } catch { toast('Não foi possível copiar', true); }
-  });
-}
-
 // ================= Configurações =================
 function telaConfig(c) {
   const cf = state.dados.config;
@@ -1070,6 +1071,7 @@ $app.addEventListener('click', async (e) => {
     return;
   }
   if (ds.cad) { state.cad = ds.cad; return render(); }
+  if (ds.escola) return trocarEscola(Number(ds.escola));
   if (ds.irTurma) { state.turmaId = Number(ds.irTurma); storage.set('horario_turma', state.turmaId); state.aba = 'grade'; state.editandoIndisp = null; storage.set('horario_aba', 'grade'); render(); return window.scrollTo(0, 0); }
   if (ds.irProf) { state.profId = Number(ds.irProf); state.aba = 'professor'; storage.set('horario_aba', 'professor'); render(); return window.scrollTo(0, 0); }
   if (state.previa && (ds.cel || ds.indisp || ds.editar || ds.excluir || ds.resolver || ds.completar
@@ -1110,6 +1112,25 @@ $app.addEventListener('click', async (e) => {
       return render();
     }
     case 'imprimir': return window.print();
+    case 'nova-escola': {
+      if (state.previa) return toast('Há uma prévia do gerador na tela. Aplique ou descarte antes.', true);
+      const atual = state.dados.config.escola;
+      return modal({
+        titulo: 'Nova escola', botao: 'Criar escola',
+        sub: 'Cada escola tem suas turmas, professores e grade. Depois é só clicar no nome para trocar.',
+        corpo: `<div class="grade-form">
+          <label class="campo">Nome da escola<input name="nome" maxlength="120" required placeholder="Ex.: Colégio Sant'Anna — Unidade 2"></label>
+          ${state.dados.periodos.length ? `<label class="chk"><input type="checkbox" name="copiar" checked>
+            <span><strong>Usar os mesmos horários de aula e regras</strong><br><span class="muted peq">Copia de ${esc(atual)} só os horários das aulas, os dias e as regras. Turmas e professores começam vazios.</span></span></label>` : ''}</div>`,
+        onSubmit: async (d) => {
+          const r = await api('/escolas', { method: 'POST', body: { nome: d.nome, copiar: d.copiar === 'on' } });
+          $modal.close();
+          state.aba = 'cadastros'; state.cad = 'turmas'; storage.set('horario_aba', 'cadastros');
+          await trocarEscola(r.id);
+          return false;
+        },
+      });
+    }
     case 'gerar': return abrirGerador();
     case 'previa-descartar': sairPrevia(); return toast('Prévia descartada');
     case 'previa-outra': {
@@ -1156,33 +1177,6 @@ $app.addEventListener('click', async (e) => {
       state.editandoIndisp = null;
       return salvar(() => api(`/professores/${id}/indisponibilidades`, { method: 'PUT', body: { itens } }), 'Horários salvos').catch(() => {});
     }
-    case 'nova-pessoa':
-      return modal({
-        titulo: 'Nova pessoa na equipe',
-        corpo: `<div class="grade-form">
-          <label class="campo">Nome<input name="nome" maxlength="80" required></label>
-          <label class="campo">Login<input name="login" maxlength="80" placeholder="e-mail ou nome.sobrenome" required><small>Sem espaços. A senha é gerada automaticamente.</small></label>
-          <label class="campo">Cargo<input name="cargo" maxlength="60" placeholder="Ex.: Coordenador do Fundamental II"></label></div>`,
-        onSubmit: async (d) => {
-          const r = await api('/usuarios', { method: 'POST', body: d });
-          $modal.close();
-          if (state.aba === 'equipe') render();
-          mostrarSenha('Acesso criado', r);
-          return false;
-        },
-      });
-    case 'nova-senha':
-      if (await confirmar('Gerar nova senha', `A senha atual de <strong>${esc(ds.nome)}</strong> deixa de funcionar.`, 'Gerar nova senha')) {
-        try { mostrarSenha('Nova senha', await api(`/usuarios/${ds.id}/nova-senha`, { method: 'POST' })); } catch (err) { toast(err.message, true); }
-      }
-      return;
-    case 'ativar':
-      try {
-        await api(`/usuarios/${ds.id}/arquivar`, { method: 'POST', body: { ativo: ds.ativo === '1' } });
-        toast(ds.ativo === '1' ? 'Acesso reativado' : 'Acesso desativado');
-        render();
-      } catch (err) { toast(err.message, true); }
-      return;
   }
 });
 
