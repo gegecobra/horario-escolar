@@ -336,6 +336,11 @@ const ABAS = [
   ['config', 'settings', 'Configurações', 'Ajustes'],
 ];
 const iniciais = (nome) => String(nome || '?').split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]).join('').toUpperCase();
+// Nome da escola embaixo da marca: não aparece enquanto for o nome de exemplo
+const nomeEscola = () => {
+  const n = String(state.dados?.config?.escola || '').trim();
+  return !n || /^(escola exemplo|minha escola)$/i.test(n) ? '' : `<small>${esc(n)}</small>`;
+};
 function render() {
   if (!state.token || !state.user || !state.dados) return renderLogin();
   const av = state.calc.avisos;
@@ -345,12 +350,12 @@ function render() {
   $app.innerHTML = `
     <div class="app">
       <header class="topo-movel">
-        <div class="brand"><img class="emblema" src="fonsario-emblema.png" alt=""><span>Fonsário<small>${esc(state.dados.config.escola)}</small></span></div>
+        <div class="brand"><img class="emblema" src="fonsario-emblema.png" alt=""><span>Fonsário${nomeEscola()}</span></div>
         <button class="icone-btn" data-acao="tema" title="Tema claro/escuro" aria-label="Tema claro/escuro">${icon(tema() === 'dark' ? 'sun' : 'moon')}</button>
         <button class="icone-btn" data-acao="sair" title="Sair" aria-label="Sair">${icon('logout')}</button>
       </header>
       <aside class="sidebar">
-        <div class="brand"><img class="emblema" src="fonsario-emblema.png" alt=""><span>Fonsário<small>${esc(state.dados.config.escola)}</small></span></div>
+        <div class="brand"><img class="emblema" src="fonsario-emblema.png" alt=""><span>Fonsário${nomeEscola()}</span></div>
         <nav class="nav">
           ${ABAS.map(([id, ic, rot, curto]) => `<button class="nav-item ${state.aba === id ? 'ativo' : ''}" data-aba="${id}" title="${rot}">
             ${icon(ic)}<span class="rot" data-curto="${curto}"><span class="longo">${rot}</span><span class="curto">${curto}</span></span>${id === 'avisos' ? badge : ''}</button>`).join('')}
