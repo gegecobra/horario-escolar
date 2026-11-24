@@ -287,7 +287,7 @@ function renderLogin() {
   $app.innerHTML = `
     <div class="login">
       <section class="login-arte">
-        <div class="brand"><img class="emblema" src="fonsario-emblema.png" alt=""><span>Fonsário<small>Horário escolar para a coordenação</small></span></div>
+        <div class="brand"><img class="emblema" src="fonsario-emblema-g.png" alt=""><span>Fonsário<small>Horário escolar para a coordenação</small></span></div>
         <div>
           <h1>O horário da escola <em>sem choque</em>.</h1>
           <p class="lead">Monte a grade das turmas em minutos. O Fonsário avisa quando um professor fica em dois lugares ao mesmo tempo e mostra como resolver.</p>

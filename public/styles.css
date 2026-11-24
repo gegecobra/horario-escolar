@@ -147,13 +147,15 @@ label.campo small { font-weight: 400; color: var(--muted); }
 }
 .login-arte::after {
   /* um quadradinho da grade em mostarda, como na logo */
-  content: ""; position: absolute; width: 54.5px; height: 54.5px; left: calc(56px * 8 + 1.5px); top: calc(56px * 2 + 1.5px);
+  content: ""; position: absolute; width: 54.5px; height: 54.5px; left: calc(56px * 9 + 1.5px); top: calc(56px * 5 + 1.5px);
   background: var(--mostarda); opacity: .85;
 }
 .login-arte > * { position: relative; z-index: 1; }
 .login-arte .brand { color: #fff; }
-.login-arte .brand span { font-size: 2rem; }
-.login-arte .brand .emblema { width: 64px; }
+.login-arte .brand { gap: 20px; }
+.login-arte .brand span { font-size: 3rem; }
+.login-arte .brand small { font-size: 1rem; margin-top: 8px; }
+.login-arte .brand .emblema { width: 150px; }
 .login-arte h1 { font-size: clamp(2rem, 3.4vw, 3rem); line-height: 1.08; max-width: 14ch; color: #fff; }
 .login-arte h1 em { font-style: normal; color: var(--mostarda); }
 .login-arte .lead { margin-top: 16px; max-width: 40ch; color: #cfe0d5; font-size: 1.02rem; }
@@ -387,6 +389,9 @@ dialog#modal::backdrop { background: rgba(8, 26, 18, .55); backdrop-filter: blur
   .login { grid-template-columns: minmax(0, 1fr); }
   .login-arte { padding: 28px 24px; gap: 18px; }
   .login-arte h1 { font-size: 1.8rem; }
+  .login-arte .brand .emblema { width: 84px; }
+  .login-arte .brand span { font-size: 2.1rem; }
+  .login-arte .brand small { font-size: .82rem; }
   .login-arte .lead, .recursos { display: none; }
   .login-arte::after { display: none; }
 }

@@ -37,6 +37,7 @@ app = trocar(app, `<h2>Minha senha</h2>`,
 // imagens embutidas (a página de demonstração é um arquivo só)
 const img = (f) => 'data:image/png;base64,' + fs.readFileSync(path.join(raiz, 'public', f)).toString('base64');
 app = app.split('src="fonsario-emblema.png"').join(`src="${img('fonsario-emblema.png')}"`);
+app = app.split('src="fonsario-emblema-g.png"').join(`src="${img('fonsario-emblema-g.png')}"`);
 
 const html = `<title>Fonsário</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
