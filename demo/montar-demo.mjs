@@ -18,18 +18,10 @@ css += `
 } }
 /* Demonstração: a moldura não permite imprimir */
 [data-acao="imprimir"] { display: none !important; }
-.sidebar { top: env(safe-area-inset-top, 0px); }
-.demo-nota { font-size: .82rem; color: var(--muted); background: var(--surface-2); border-radius: 12px; padding: 10px 12px; line-height: 1.45; }
 .demo-nota button { margin-top: 6px; }
 `;
 
 let app = ler('public/app.js');
-app = trocar(app, "function tema() { return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light'; }",
-  `function tema() {
-  const t = document.documentElement.dataset.theme;
-  if (t) return t === 'dark' ? 'dark' : 'light';
-  try { return matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; } catch { return 'light'; }
-}`);
 app = trocar(app, '<label class="campo">Usuário ou e-mail<input name="login" autocomplete="username" required></label>',
   '<label class="campo">Usuário ou e-mail<input id="login" name="login" autocomplete="username" value="coordenacao@escola.com" required></label>');
 app = trocar(app, '<label class="campo">Senha<input name="senha" type="password" autocomplete="current-password" required></label>',
@@ -42,10 +34,14 @@ app = trocar(app, `<h2>Minha senha</h2>`,
   `<h2>Minha senha</h2>
       <div class="demo-nota">Demonstração: para voltar à escola de exemplo do começo, <button type="button" class="link-btn" onclick="window.__restaurarDemo()">recomece aqui</button>.</div>`);
 
-const html = `<title>Horário Escolar</title>
+// imagens embutidas (a página de demonstração é um arquivo só)
+const img = (f) => 'data:image/png;base64,' + fs.readFileSync(path.join(raiz, 'public', f)).toString('base64');
+app = app.split('src="fonsario-emblema.png"').join(`src="${img('fonsario-emblema.png')}"`);
+
+const html = `<title>Fonsário</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 ${css}
 </style>
@@ -65,5 +61,5 @@ ${ler('public/gerador.js')}
 ${app}
 </script>
 `;
-fs.writeFileSync(path.join(raiz, 'demo/horario-escolar-demo.html'), html);
-console.log('demo/horario-escolar-demo.html', Math.round(html.length / 1024), 'KB');
+fs.writeFileSync(path.join(raiz, 'demo/fonsario-demo.html'), html);
+console.log('demo/fonsario-demo.html', Math.round(html.length / 1024), 'KB');

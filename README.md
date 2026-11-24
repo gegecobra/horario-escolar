@@ -1,4 +1,8 @@
-# Horário Escolar
+# Fonsário
+
+![Fonsário](public/fonsario-logo.png)
+
+Antes chamado "Horário Escolar".
 
 Sistema para a **coordenação** montar o horário das turmas, com avisos na hora.
 Separado do Beca, mas com a mesma tecnologia (Node 22 + Express 5 + PostgreSQL, telas em JavaScript puro).

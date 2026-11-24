@@ -404,4 +404,4 @@ app.use('/api', (req, res) => erro(res, 404, 'Rota não encontrada'));
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
 await iniciarBanco();
-app.listen(PORT, HOST, () => console.log(`Horário Escolar rodando em http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`));
+app.listen(PORT, HOST, () => console.log(`Fonsário rodando em http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`));

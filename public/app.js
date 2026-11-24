@@ -54,7 +54,8 @@ const state = {
 const DIAS = { 1: 'Segunda', 2: 'Terça', 3: 'Quarta', 4: 'Quinta', 5: 'Sexta', 6: 'Sábado' };
 const DIAS_CURTO = { 1: 'Seg', 2: 'Ter', 3: 'Qua', 4: 'Qui', 5: 'Sex', 6: 'Sáb' };
 const TURNOS = ['Manhã', 'Tarde', 'Noite'];
-const HUES = [221, 8, 152, 38, 275, 190, 330, 95, 25, 245, 170, 350];
+// tons das disciplinas, escolhidos para combinar com o verde e o mostarda da marca
+const HUES = [150, 38, 12, 205, 285, 85, 340, 175, 24, 228, 55, 0];
 
 // ================= Utilidades =================
 async function api(caminho, { method = 'GET', body } = {}) {
@@ -91,7 +92,12 @@ function sairLocal() {
   if ($modal.open) $modal.close();
   render();
 }
-function tema() { return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light'; }
+// Tema atual: o escolhido no botão ou, se ninguém escolheu, o do aparelho
+function tema() {
+  const t = document.documentElement.dataset.theme;
+  if (t) return t === 'dark' ? 'dark' : 'light';
+  try { return matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; } catch { return 'light'; }
+}
 
 // ================= Modal =================
 // Abre um formulário. onSubmit recebe os dados; se der erro, a mensagem aparece no modal.
@@ -280,14 +286,27 @@ function calcular() {
 function renderLogin() {
   $app.innerHTML = `
     <div class="login">
+      <section class="login-arte">
+        <div class="brand"><img class="emblema" src="fonsario-emblema.png" alt=""><span>Fonsário<small>Horário escolar para a coordenação</small></span></div>
+        <div>
+          <h1>O horário da escola <em>sem choque</em>.</h1>
+          <p class="lead">Monte a grade das turmas em minutos. O Fonsário avisa quando um professor fica em dois lugares ao mesmo tempo e mostra como resolver.</p>
+          <div class="recursos">
+            <div class="recurso"><span class="ic">${icon('sparkles')}</span>Gera o horário sozinho e mostra uma prévia antes de salvar</div>
+            <div class="recurso"><span class="ic">${icon('wand')}</span>Aponta choques e sugere a troca certa</div>
+            <div class="recurso"><span class="ic">${icon('lock')}</span>Respeita os horários em que cada professor não pode</div>
+          </div>
+        </div>
+      </section>
+      <div class="login-form-area">
       <form class="login-card" id="form-login">
-        <div class="brand"><div class="brand-mark">${icon('grid')}</div><span>Horário Escolar<small>Coordenação pedagógica</small></span></div>
-        <div><h2>Entrar</h2><p class="muted">Monte e confira o horário das turmas.</p></div>
+        <div><h2>Entrar</h2><p class="sub">Use o login que a coordenação recebeu.</p></div>
         <label class="campo">Usuário ou e-mail<input name="login" autocomplete="username" required></label>
         <label class="campo">Senha<input name="senha" type="password" autocomplete="current-password" required></label>
         <p class="erro-txt" id="erro-login"></p>
         <button class="btn primario" type="submit">Entrar</button>
       </form>
+      </div>
     </div>`;
   document.getElementById('form-login').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -307,14 +326,16 @@ function renderLogin() {
 }
 
 // ================= Estrutura =================
+// [id, ícone, nome no menu, nome curto (barra do celular)]
 const ABAS = [
-  ['grade', 'grid', 'Grade das turmas'],
-  ['professor', 'user', 'Por professor'],
-  ['avisos', 'triangle', 'Avisos'],
-  ['cadastros', 'layers', 'Cadastros'],
-  ['equipe', 'users', 'Equipe'],
-  ['config', 'settings', 'Configurações'],
+  ['grade', 'grid', 'Grade das turmas', 'Grade'],
+  ['professor', 'user', 'Por professor', 'Professor'],
+  ['avisos', 'triangle', 'Avisos', 'Avisos'],
+  ['cadastros', 'layers', 'Cadastros', 'Cadastros'],
+  ['equipe', 'users', 'Equipe', 'Equipe'],
+  ['config', 'settings', 'Configurações', 'Ajustes'],
 ];
+const iniciais = (nome) => String(nome || '?').split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]).join('').toUpperCase();
 function render() {
   if (!state.token || !state.user || !state.dados) return renderLogin();
   const av = state.calc.avisos;
@@ -323,16 +344,24 @@ function render() {
   const badge = erros ? `<span class="badge">${erros}</span>` : atencao ? `<span class="badge amarelo">${atencao}</span>` : '';
   $app.innerHTML = `
     <div class="app">
+      <header class="topo-movel">
+        <div class="brand"><img class="emblema" src="fonsario-emblema.png" alt=""><span>Fonsário<small>${esc(state.dados.config.escola)}</small></span></div>
+        <button class="icone-btn" data-acao="tema" title="Tema claro/escuro" aria-label="Tema claro/escuro">${icon(tema() === 'dark' ? 'sun' : 'moon')}</button>
+        <button class="icone-btn" data-acao="sair" title="Sair" aria-label="Sair">${icon('logout')}</button>
+      </header>
       <aside class="sidebar">
-        <div class="brand"><div class="brand-mark">${icon('grid')}</div><span>Horário Escolar<small>${esc(state.dados.config.escola)}</small></span></div>
+        <div class="brand"><img class="emblema" src="fonsario-emblema.png" alt=""><span>Fonsário<small>${esc(state.dados.config.escola)}</small></span></div>
         <nav class="nav">
-          ${ABAS.map(([id, ic, rot]) => `<button class="nav-item ${state.aba === id ? 'ativo' : ''}" data-aba="${id}" title="${rot}">
-            ${icon(ic)}<span class="rot">${rot}</span>${id === 'avisos' ? badge : ''}</button>`).join('')}
+          ${ABAS.map(([id, ic, rot, curto]) => `<button class="nav-item ${state.aba === id ? 'ativo' : ''}" data-aba="${id}" title="${rot}">
+            ${icon(ic)}<span class="rot" data-curto="${curto}"><span class="longo">${rot}</span><span class="curto">${curto}</span></span>${id === 'avisos' ? badge : ''}</button>`).join('')}
         </nav>
         <div class="user-card">
-          <div><strong>${esc(state.user.nome)}</strong><span>${esc(state.user.cargo || state.user.login)}</span></div>
-          <button class="icone-btn" data-acao="tema" title="Tema claro/escuro">${icon(tema() === 'dark' ? 'sun' : 'moon')}</button>
-          <button class="icone-btn" data-acao="sair" title="Sair">${icon('logout')}</button>
+          <span class="avatar">${esc(iniciais(state.user.nome))}</span>
+          <div class="quem" title="${esc(state.user.nome)}"><strong>${esc(state.user.nome)}</strong><span>${esc(state.user.cargo || state.user.login)}</span></div>
+          <div class="user-acoes">
+            <button data-acao="tema" title="${tema() === 'dark' ? 'Mudar para o tema claro' : 'Mudar para o tema escuro'}">${icon(tema() === 'dark' ? 'sun' : 'moon')} Tema</button>
+            <button data-acao="sair">${icon('logout')} Sair</button>
+          </div>
         </div>
       </aside>
       <main class="conteudo" id="conteudo"></main>
@@ -375,12 +404,12 @@ function abrirGerador() {
     sub: 'O sistema monta a grade seguindo as regras. Você vê uma prévia antes de salvar.',
     botao: 'Gerar prévia',
     corpo: `<div class="grade-form">
-      <div class="campo" style="display:grid;gap:6px"><span style="font-size:.86rem;font-weight:600;color:var(--text-2)">Quais turmas?</span>
+      <div class="campo" style="display:grid;gap:6px"><span style="font-size:.86rem;font-weight:600;color:var(--ink-2)">Quais turmas?</span>
         <div class="radios">
           <label><input type="radio" name="escopo" value="todas" checked><div><strong>Todas as turmas (${D.turmas.length})</strong><span>Melhor resultado: o sistema equilibra os professores entre as turmas.</span></div></label>
           ${t ? `<label><input type="radio" name="escopo" value="${t.id}"><div><strong>Só o ${esc(t.nome)}</strong><span>As outras turmas ficam como estão.</span></div></label>` : ''}
         </div></div>
-      <div class="campo" style="display:grid;gap:6px"><span style="font-size:.86rem;font-weight:600;color:var(--text-2)">O que fazer com as aulas que já estão na grade?</span>
+      <div class="campo" style="display:grid;gap:6px"><span style="font-size:.86rem;font-weight:600;color:var(--ink-2)">O que fazer com as aulas que já estão na grade?</span>
         <div class="radios">
           <label><input type="radio" name="modo" value="completar" checked><div><strong>Manter e completar</strong><span>Só coloca as aulas que faltam.</span></div></label>
           <label><input type="radio" name="modo" value="refazer"><div><strong>Refazer do zero</strong><span>Monta tudo de novo. Só as aulas fixadas (${fixas}) ficam no lugar.</span></div></label>
@@ -946,7 +975,7 @@ function mostrarSenha(titulo, r) {
   });
   $modal.querySelector('[data-fechar]:last-child')?.addEventListener('click', () => $modal.close());
   $modal.querySelector('[data-copiar]').addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText(`Horário Escolar\nLogin: ${r.login}\nSenha: ${r.senha}\n${location.origin}`); toast('Copiado'); } catch { toast('Não foi possível copiar', true); }
+    try { await navigator.clipboard.writeText(`Fonsário\nLogin: ${r.login}\nSenha: ${r.senha}\n${location.origin}`); toast('Copiado'); } catch { toast('Não foi possível copiar', true); }
   });
 }
 
@@ -962,10 +991,10 @@ function telaConfig(c) {
         <label class="campo">Duração de cada aula (minutos)<input name="duracao_aula" type="number" min="20" max="120" value="${cf.duracao_aula}" required>
           <small>Usada para converter aulas em horas.</small></label>
       </div>
-      <div class="campo" style="display:grid;gap:6px"><span style="font-size:.86rem;font-weight:600;color:var(--text-2)">Dias de aula</span>
+      <div class="campo" style="display:grid;gap:6px"><span style="font-size:.86rem;font-weight:600;color:var(--ink-2)">Dias de aula</span>
         <div class="dias-check">${Object.entries(DIAS).map(([n, nome]) => `<label><input type="checkbox" name="dia" value="${n}" ${cf.dias.includes(Number(n)) ? 'checked' : ''}> ${nome}</label>`).join('')}</div>
       </div>
-      <div class="campo" style="display:grid;gap:6px"><span style="font-size:.86rem;font-weight:600;color:var(--text-2)">Regra de carga dos professores</span>
+      <div class="campo" style="display:grid;gap:6px"><span style="font-size:.86rem;font-weight:600;color:var(--ink-2)">Regra de carga dos professores</span>
         <div class="radios">
           <label><input type="radio" name="rede" value="particular" ${cf.rede === 'particular' ? 'checked' : ''}>
             <div><strong>Rede particular</strong><span>Avisa quando o professor passa do limite de aulas por semana que você cadastrar para ele.</span></div></label>
@@ -1163,4 +1192,10 @@ async function iniciar() {
   }
   render();
 }
+// Se o aparelho trocar de tema (e ninguém escolheu no botão), atualiza os botões
+try {
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if (!document.documentElement.dataset.theme && state.dados && !$modal.open) render();
+  });
+} catch { /* navegador antigo */ }
 iniciar();
